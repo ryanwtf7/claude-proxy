@@ -32,6 +32,7 @@ loadEnv();
 loadClaudeSettings();
 
 const _anthroBase = (process.env.ANTHROPIC_BASE_URL || 'https://opencode.ai').replace(/\/+$/, '');
+const _opencodeBase = (process.env.OPENCODE_BASE_URL || 'https://opencode.ai').replace(/\/+$/, '');
 
 export const SECRET_KEY = process.env.SECRET_KEY || 'ryanisyourpapa-nometterwhat';
 export const API_KEY = process.env.OPENCODE_API_KEY || process.env.ANTHROPIC_API_KEY || '';
@@ -39,9 +40,9 @@ export const PROXY = process.env.OPENCODE_PROXY || '';
 export const HOST = process.env.HOST || process.env.OPENCODE_HOST || '0.0.0.0';
 export const PORT = parseInt(process.env.PORT || process.env.OPENCODE_PORT || '4000', 10);
 
-export const API_BASE_OPENAI = `${_anthroBase}/zen/go/v1/chat/completions`;
-export const API_BASE_ANTHROPIC = `${_anthroBase}/zen/go/v1/messages`;
-export const API_BASE_ZEN_V1 = `${_anthroBase}/zen/v1/chat/completions`;
+export const API_BASE_OPENAI = `${_opencodeBase}/zen/go/v1/chat/completions`;
+export const API_BASE_ANTHROPIC = `${_opencodeBase}/zen/go/v1/messages`;
+export const API_BASE_ZEN_V1 = `${_opencodeBase}/zen/v1/chat/completions`;
 
 export interface ModelConfig {
   endpoint: string;

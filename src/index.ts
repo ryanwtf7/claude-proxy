@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import chalk from 'chalk';
-import { initDB, logRequest, getDashboardData, getUsageStats, getRecentLogs } from './database.js';
+import { initDB, logRequest, getDashboardData, getUsageStats, getRecentLogs, getLogsPaginated, deleteLogs, getFilteredStats, closeDB } from './database.js';
 import { anthropicToOpenAI, openaiToAnthropic, estimateInputTokens, estimateTokens, getOutputTokens, extractCacheTokens, extractText, sse, forwardHeaders } from './convert.js';
 import { SECRET_KEY, API_KEY, PROXY, HOST, PORT, MODELS, ROUTES, getModelConfig, routeFor, FALLBACK_PROVIDERS } from './config.js';
 
@@ -35,6 +35,8 @@ function classifyError(status: number, body: string): string {
   if (status === 400 && body.toLowerCase().includes('quota')) return 'quota';
   if (status === 400 && body.toLowerCase().includes('rate')) return 'rate_limit';
   if (RETRYABLE.has(status)) return 'retryable';
+  if (status === 404) return 'retryable'; // Cloudflare routing blips, try fallbacks
+  if (status === 400) return 'retryable'; // bad request on one provider may work on another
   return 'fatal';
 }
 
@@ -137,97 +139,115 @@ async function* openaiStreamToAnthropic(
   let buf = '';
   const decoder = new TextDecoder();
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const lines = buf.split('\n');
-    buf = lines.pop() || '';
+  function emitCleanup(): string {
+    let out = '';
+    if (!started) {
+      out += sse('message_start', { type: 'message_start', message: { id: msgId, type: 'message', role: 'assistant', content: [], model: origModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: estInput, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } });
+    }
+    for (const idx of openBlocks) out += sse('content_block_stop', { type: 'content_block_stop', index: idx });
+    out += sse('message_delta', { type: 'message_delta', delta: { stop_reason: 'max_tokens' }, usage: { output_tokens: streamOut, input_tokens: estInput } });
+    out += sse('message_stop', { type: 'message_stop' });
+    return out;
+  }
 
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      const data = line.slice(6).trim();
-      if (data === '[DONE]') {
-        let finalIn = estInput;
-        let finalOut = streamOut;
-        let finalCache = 0;
-        let finalCacheCreation = 0;
-        if (actualUsage) {
-          finalIn = actualUsage.prompt_tokens ?? estInput;
-          finalOut = getOutputTokens(actualUsage);
-          if (finalOut == null) {
-            const total = actualUsage.total_tokens;
-            const prompt = actualUsage.prompt_tokens;
-            if (total != null && prompt != null) finalOut = total - prompt;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') {
+          let finalIn = estInput;
+          let finalOut = streamOut;
+          let finalCache = 0;
+          let finalCacheCreation = 0;
+          if (actualUsage) {
+            finalIn = actualUsage.prompt_tokens ?? estInput;
+            finalOut = getOutputTokens(actualUsage);
+            if (finalOut == null) {
+              const total = actualUsage.total_tokens;
+              const prompt = actualUsage.prompt_tokens;
+              if (total != null && prompt != null) finalOut = total - prompt;
+            }
+            if (finalOut == null) finalOut = streamOut;
+            finalCache = extractCacheTokens(actualUsage);
+            finalCacheCreation = actualUsage.cache_creation_input_tokens || actualUsage.prompt_tokens_details?.cache_creation || 0;
           }
-          if (finalOut == null) finalOut = streamOut;
-          finalCache = extractCacheTokens(actualUsage);
-          finalCacheCreation = actualUsage.cache_creation_input_tokens || actualUsage.prompt_tokens_details?.cache_creation || 0;
+          if (!started) {
+            yield sse('message_start', { type: 'message_start', message: { id: msgId, type: 'message', role: 'assistant', content: [], model: origModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: finalIn, output_tokens: 0, cache_creation_input_tokens: finalCacheCreation, cache_read_input_tokens: finalCache } } });
+          }
+          for (const idx of openBlocks) yield sse('content_block_stop', { type: 'content_block_stop', index: idx });
+          const stopMap: Record<string, string> = { stop: 'end_turn', length: 'max_tokens', content_filter: 'content_filter' };
+          let stop = stopMap[finishReason || ''] || 'end_turn';
+          if (Object.keys(toolBlockIdx).length) stop = 'tool_use';
+          yield sse('message_delta', { type: 'message_delta', delta: { stop_reason: stop }, usage: { output_tokens: finalOut, input_tokens: finalIn, cache_read_input_tokens: finalCache } });
+          yield sse('message_stop', { type: 'message_stop' });
+          openBlocks.length = 0;
+          return { finalIn, finalOut, finalCache, provider: '' } as any;
         }
+
+        let chunk: any;
+        try { chunk = JSON.parse(data); } catch { continue; }
+
+        const chunkUsage = chunk.usage;
+        if (chunkUsage && typeof chunkUsage === 'object') actualUsage = chunkUsage;
+
+        const choices = chunk.choices || [];
+        const firstChoice = choices[0] || {};
+        if (firstChoice.finish_reason) finishReason = firstChoice.finish_reason;
+        const delta = firstChoice.delta || {};
+
         if (!started) {
-          yield sse('message_start', { type: 'message_start', message: { id: msgId, type: 'message', role: 'assistant', content: [], model: origModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: finalIn, output_tokens: 0, cache_creation_input_tokens: finalCacheCreation, cache_read_input_tokens: finalCache } } });
+          yield sse('message_start', { type: 'message_start', message: { id: msgId, type: 'message', role: 'assistant', content: [], model: origModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: estInput, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } });
+          started = true;
         }
-        for (const idx of openBlocks) yield sse('content_block_stop', { type: 'content_block_stop', index: idx });
-        const stopMap: Record<string, string> = { stop: 'end_turn', length: 'max_tokens', content_filter: 'content_filter' };
-        let stop = stopMap[finishReason || ''] || 'end_turn';
-        if (Object.keys(toolBlockIdx).length) stop = 'tool_use';
-        yield sse('message_delta', { type: 'message_delta', delta: { stop_reason: stop }, usage: { output_tokens: finalOut, input_tokens: finalIn, cache_read_input_tokens: finalCache } });
-        yield sse('message_stop', { type: 'message_stop' });
-        return { finalIn, finalOut, finalCache, provider: '' } as any;
-      }
 
-      let chunk: any;
-      try { chunk = JSON.parse(data); } catch { continue; }
-
-      const chunkUsage = chunk.usage;
-      if (chunkUsage && typeof chunkUsage === 'object') actualUsage = chunkUsage;
-
-      const choices = chunk.choices || [];
-      const firstChoice = choices[0] || {};
-      if (firstChoice.finish_reason) finishReason = firstChoice.finish_reason;
-      const delta = firstChoice.delta || {};
-
-      if (!started) {
-        yield sse('message_start', { type: 'message_start', message: { id: msgId, type: 'message', role: 'assistant', content: [], model: origModel, stop_reason: null, stop_sequence: null, usage: { input_tokens: estInput, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } } });
-        started = true;
-      }
-
-      const text = typeof delta.content === 'string' ? delta.content : (Array.isArray(delta.content) ? delta.content.map((p: any) => p.text || '').join('') : '');
-      if (text) {
-        if (textBlockIdx === null) {
-          textBlockIdx = nextIdx++;
-          yield sse('content_block_start', { type: 'content_block_start', index: textBlockIdx, content_block: { type: 'text', text: '' } });
-          openBlocks.push(textBlockIdx);
+        const text = typeof delta.content === 'string' ? delta.content : (Array.isArray(delta.content) ? delta.content.map((p: any) => p.text || '').join('') : '');
+        if (text) {
+          if (textBlockIdx === null) {
+            textBlockIdx = nextIdx++;
+            yield sse('content_block_start', { type: 'content_block_start', index: textBlockIdx, content_block: { type: 'text', text: '' } });
+            openBlocks.push(textBlockIdx);
+          }
+          streamOut += estimateTokens(text);
+          yield sse('content_block_delta', { type: 'content_block_delta', index: textBlockIdx, delta: { type: 'text_delta', text } });
         }
-        streamOut += estimateTokens(text);
-        yield sse('content_block_delta', { type: 'content_block_delta', index: textBlockIdx, delta: { type: 'text_delta', text } });
-      }
 
-      const reasoning = delta.reasoning_content || delta.reasoning;
-      if (typeof reasoning === 'string' && reasoning) {
-        if (reasoningBlockIdx === null) {
-          reasoningBlockIdx = nextIdx++;
-          yield sse('content_block_start', { type: 'content_block_start', index: reasoningBlockIdx, content_block: { type: 'thinking', thinking: '' } });
-          openBlocks.push(reasoningBlockIdx);
+        const reasoning = delta.reasoning_content || delta.reasoning;
+        if (typeof reasoning === 'string' && reasoning) {
+          if (reasoningBlockIdx === null) {
+            reasoningBlockIdx = nextIdx++;
+            yield sse('content_block_start', { type: 'content_block_start', index: reasoningBlockIdx, content_block: { type: 'thinking', thinking: '' } });
+            openBlocks.push(reasoningBlockIdx);
+          }
+          streamOut += estimateTokens(reasoning);
+          yield sse('content_block_delta', { type: 'content_block_delta', index: reasoningBlockIdx, delta: { type: 'thinking_delta', thinking: reasoning } });
         }
-        streamOut += estimateTokens(reasoning);
-        yield sse('content_block_delta', { type: 'content_block_delta', index: reasoningBlockIdx, delta: { type: 'thinking_delta', thinking: reasoning } });
-      }
 
-      for (const tc of delta.tool_calls || []) {
-        const apiIdx = tc.index || 0;
-        if (toolBlockIdx[apiIdx] === undefined) {
-          const bidx = nextIdx++;
-          toolBlockIdx[apiIdx] = bidx;
-          yield sse('content_block_start', { type: 'content_block_start', index: bidx, content_block: { type: 'tool_use', id: tc.id || `toolu_${crypto.randomUUID().slice(0, 8)}`, name: tc.function?.name || '', input: {} } });
-          openBlocks.push(bidx);
-        }
-        const args = tc.function?.arguments || '';
-        if (args) {
-          streamOut += estimateTokens(args);
-          yield sse('content_block_delta', { type: 'content_block_delta', index: toolBlockIdx[apiIdx], delta: { type: 'input_json_delta', partial_json: args } });
+        for (const tc of delta.tool_calls || []) {
+          const apiIdx = tc.index || 0;
+          if (toolBlockIdx[apiIdx] === undefined) {
+            const bidx = nextIdx++;
+            toolBlockIdx[apiIdx] = bidx;
+            yield sse('content_block_start', { type: 'content_block_start', index: bidx, content_block: { type: 'tool_use', id: tc.id || `toolu_${crypto.randomUUID().slice(0, 8)}`, name: tc.function?.name || '', input: {} } });
+            openBlocks.push(bidx);
+          }
+          const args = tc.function?.arguments || '';
+          if (args) {
+            streamOut += estimateTokens(args);
+            yield sse('content_block_delta', { type: 'content_block_delta', index: toolBlockIdx[apiIdx], delta: { type: 'input_json_delta', partial_json: args } });
+          }
         }
       }
+    }
+  } finally {
+    if (openBlocks.length) {
+      yield emitCleanup();
     }
   }
 }
@@ -349,6 +369,7 @@ async function handleMessages(req: express.Request, res: express.Response) {
         let streamIn = estInput, streamOut = 0, streamCache = 0;
         let buf = '';
         const decoder = new TextDecoder();
+        let openBlocks: number[] = [];
 
         try {
           while (true) {
@@ -365,7 +386,11 @@ async function handleMessages(req: express.Request, res: express.Response) {
                 if (ds === '[DONE]') continue;
                 try {
                   const ev = JSON.parse(ds);
-                  if (ev.type === 'message_start') {
+                  if (ev.type === 'content_block_start') {
+                    openBlocks.push(ev.index);
+                  } else if (ev.type === 'content_block_stop') {
+                    openBlocks = openBlocks.filter(i => i !== ev.index);
+                  } else if (ev.type === 'message_start') {
                     const mu = ev.message?.usage || {};
                     streamIn = mu.input_tokens ?? estInput;
                     streamCache = extractCacheTokens(mu);
@@ -380,6 +405,10 @@ async function handleMessages(req: express.Request, res: express.Response) {
           }
         } catch (e: any) {
           console.error(`  ${C.bad('✗')} ${chalk.dim('stream error from ' + r.name + ': ' + e.message)}`);
+          for (const idx of openBlocks) res.write(sse('content_block_stop', { type: 'content_block_stop', index: idx }));
+          if (!res.headersSent) res.setHeader('Content-Type', 'text/event-stream');
+          res.write(sse('message_delta', { type: 'message_delta', delta: { stop_reason: 'error' }, usage: { output_tokens: streamOut } }));
+          res.write(sse('message_stop', { type: 'message_stop' }));
         }
 
         console.log(`  ${C.good('✓')} ${chalk.bold(modelId)} ${chalk.dim('| +' + streamIn + ' in | +' + streamOut + ' out | +' + streamCache + ' cache')} ${chalk.dim('via ' + r.name)}`);
@@ -417,8 +446,8 @@ async function handleMessages(req: express.Request, res: express.Response) {
       const estInput = estimateInputTokens(reqBody);
       const streamBody = { ...oaiBody, stream: true, stream_options: { include_usage: true } };
 
-      // Rebuild chain with streaming body
-      const streamChain = chain.map(c => ({ ...c, body: streamBody }));
+      // Rebuild chain with streaming body — preserve per-provider model mapping
+      const streamChain = chain.map(c => ({ ...c, body: { ...streamBody, model: c.body.model } }));
 
       await tryChain(streamChain, { ...commonOpts, isAnthropicProto: false, isStream: true }, async (r) => {
         res.setHeader('Content-Type', 'text/event-stream');
@@ -457,8 +486,31 @@ app.get('/v1/models', (_req, res) => {
   res.json({ data: Object.keys(MODELS).map(id => ({ id, object: 'model', created: Math.floor(Date.now() / 1000), owned_by: 'opencode-proxy' })), object: 'list' });
 });
 
+app.get('/v1/providers', (_req, res) => {
+  res.json({
+    chain: FALLBACK_PROVIDERS.map(fb => ({ name: fb.name, endpoint: fb.chatEndpoint })),
+    model_mappings: Object.fromEntries(
+      Object.entries(MODEL_FALLBACK).map(([model, map]) => [model, map])
+    ),
+    default_fallbacks: DEFAULT_FALLBACKS,
+    fallbacks_configured: FALLBACK_PROVIDERS.length,
+  });
+});
+
+app.get('/v1/providers', (_req, res) => {
+  res.json({
+    chain: FALLBACK_PROVIDERS.map(fb => ({ name: fb.name, endpoint: fb.chatEndpoint })),
+    model_mappings: Object.fromEntries(
+      Object.entries(MODEL_FALLBACK).map(([model, map]) => [model, map])
+    ),
+    default_fallbacks: DEFAULT_FALLBACKS,
+    fallbacks_configured: FALLBACK_PROVIDERS.length,
+  });
+});
+
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', version: '1.0.0', timestamp: new Date().toISOString() });
+  const s = getUsageStats();
+  res.json({ status: 'ok', version: '1.0.0', timestamp: new Date().toISOString(), requests: s.total_requests, tokens_input: s.total_input_tokens, tokens_output: s.total_output_tokens });
 });
 
 app.post('/v1/messages/count_tokens', (req, res) => {
@@ -868,12 +920,28 @@ app.get('/dash/data', (req, res) => {
 
 app.get('/dash/stats', (req, res) => {
   if (req.headers['x-api-key'] !== SECRET_KEY && req.query.key !== SECRET_KEY) return res.status(401).json({ error: 'unauthorized' });
-  res.json(getUsageStats());
+  const from = req.query.from_date as string;
+  const to = req.query.to_date as string;
+  if (from || to) {
+    res.json(getFilteredStats(from, to));
+  } else {
+    res.json(getUsageStats());
+  }
 });
 
 app.get('/dash/logs', (req, res) => {
   if (req.headers['x-api-key'] !== SECRET_KEY && req.query.key !== SECRET_KEY) return res.status(401).json({ error: 'unauthorized' });
-  res.json(getRecentLogs(parseInt(req.query.limit as string || '100', 10)));
+  const limit = parseInt(req.query.limit as string || '100', 10);
+  const offset = parseInt(req.query.offset as string || '0', 10);
+  res.json(getLogsPaginated(limit, offset));
+});
+
+app.delete('/dash/history', (req, res) => {
+  if (req.headers['x-api-key'] !== SECRET_KEY && req.query.key !== SECRET_KEY) return res.status(401).json({ error: 'unauthorized' });
+  const all = req.query.all === 'true';
+  const before = req.query.before as string;
+  const deleted = deleteLogs(all, before);
+  res.json({ deleted });
 });
 
 // ── Terminal dashboard ───────────────────────────────────────────────────────
@@ -963,6 +1031,15 @@ function fmt(n: number): string {
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
   return String(n);
 }
+
+// ── Shutdown handlers ─────────────────────────────────────────────────────────
+function shutdown() {
+  console.log(C.dim('  Shutting down...'));
+  closeDB();
+  process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 // ── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, HOST, () => {

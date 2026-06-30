@@ -186,14 +186,16 @@ export function openaiToAnthropic(resp: any, model: string): any {
   const usage = resp.usage || {};
   const blocks: any[] = [];
 
+  const hasThinking = !!(msg.reasoning_content || msg.reasoning);
   if (msg.reasoning_content) blocks.push({ type: 'thinking', thinking: msg.reasoning_content });
   if (msg.reasoning) blocks.push({ type: 'thinking', thinking: msg.reasoning });
   const content = msg.content;
-  if (content) {
-    const text = typeof content === 'string' ? content : (Array.isArray(content) ? content.map((p: any) => p.text || '').join('') : '');
-    blocks.push({ type: 'text', text });
-  } else if (msg.reasoning) {
-    blocks.push({ type: 'text', text: msg.reasoning });
+  const textContent = typeof content === 'string' ? content : (Array.isArray(content) ? content.map((p: any) => p.text || '').join('') : '');
+  if (textContent) {
+    blocks.push({ type: 'text', text: textContent });
+  } else if (hasThinking) {
+    // Model only returned reasoning -- duplicate as text so Claude Code shows it
+    blocks.push({ type: 'text', text: msg.reasoning_content || msg.reasoning });
   }
   for (const tc of msg.tool_calls || []) {
     const fn = tc.function || {};
