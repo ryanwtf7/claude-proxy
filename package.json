@@ -1,0 +1,63 @@
+{
+  "name": "claude-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-provider API proxy with fallback chain, request logging, and web dashboard. Drop-in for api.anthropic.com that routes through OpenCode, Groq, OpenRouter, Cerebras, GitHub Models, Mistral, OpenAI, and Gemini.",
+  "keywords": [
+    "anthropic",
+    "claude",
+    "proxy",
+    "api-proxy",
+    "openai-proxy",
+    "multi-provider",
+    "fallback",
+    "opencode",
+    "groq",
+    "openrouter",
+    "cerebras",
+    "github-models",
+    "mistral",
+    "gemini",
+    "llm",
+    "ai",
+    "typescript",
+    "express"
+  ],
+  "author": "RY4N",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ryanwtf7/claude-proxy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ryanwtf7claude-proxy/issues"
+  },
+  "homepage": "https://github.com/ryanwtf7/claude-proxy#readme",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "chalk": "^5.6.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.0.1",
+    "eslint": "^10.6.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.1"
+  }
+}
