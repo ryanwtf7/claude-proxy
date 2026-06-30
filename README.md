@@ -37,12 +37,43 @@ The server starts on `http://0.0.0.0:4000` by default.
 
 ### Configure Claude Code
 
-Point Claude Code at your local proxy:
+Point Claude Code at your local proxy by editing the settings file.
+
+#### Windows
+
+Path: `C:\Users\<you>\.claude\settings.json`
 
 ```json
 {
-  "proxy": "http://localhost:4000",
-  "apiKey": "YOUR_SECRET_KEY"
+    "env": {
+        "ANTHROPIC_API_KEY": "YOUR_API_KEY",
+        "ANTHROPIC_BASE_URL": "/",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+    },
+    "permissions": {
+        "allow": [],
+        "deny": []
+    },
+    "apiKeyHelper": "echo 'YOUR_API_KEY'"
+}
+```
+
+#### Linux / macOS
+
+Path: `~/.claude/settings.json`
+
+```json
+{
+    "env": {
+        "ANTHROPIC_API_KEY": "YOUR_API_KEY",
+        "ANTHROPIC_BASE_URL": "",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+    },
+    "permissions": {
+        "allow": [],
+        "deny": []
+    },
+    "apiKeyHelper": "echo 'YOUR_API_KEY'"
 }
 ```
 
