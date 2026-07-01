@@ -126,6 +126,18 @@ const SONNET_FALLBACKS: Record<string, string> = {
 };
 
 // Build provider chain: [OpenCode, ...fallbacks]
+function stripReasoning(messages: any[]): any[] {
+  return messages.map((m: any) => {
+    if (m.reasoning_content) {
+      const { reasoning_content, ...rest } = m;
+      return rest;
+    }
+    return m;
+  });
+}
+
+const PROVIDERS_WITH_REASONING = new Set(['openai', 'gemini', 'openrouter']);
+
 function modelForProvider(provider: string, routeTier: Record<string, string>, origModel: string): string {
   return routeTier[provider] || DEFAULT_FALLBACKS[provider] || (MODEL_FALLBACK[origModel]?.[provider]) || origModel;
 }
@@ -146,6 +158,9 @@ function buildChain(endpoint: string, isAnthropicProto: boolean, body: any, rout
     if (fb) {
       const fbModel = modelForProvider(fb.name, routeTier, fbBody.model);
       const fbBodyClone = { ...fbBody, model: fbModel };
+      if (!PROVIDERS_WITH_REASONING.has(fb.name) && fbBodyClone.messages) {
+        fbBodyClone.messages = stripReasoning(fbBodyClone.messages);
+      }
       chain.push({ name: fb.name, url: fb.chatEndpoint, key: fb.apiKey, body: fbBodyClone, headers: { 'Authorization': `Bearer ${fb.apiKey}`, 'Content-Type': 'application/json' } });
       primaryUsed = true;
     } else {
@@ -170,6 +185,9 @@ function buildChain(endpoint: string, isAnthropicProto: boolean, body: any, rout
     if (primary && fb.name === primary) continue;
     const fbModel = modelForProvider(fb.name, routeTier, fbBody.model);
     const fbBodyClone = { ...fbBody, model: fbModel };
+    if (!PROVIDERS_WITH_REASONING.has(fb.name) && fbBodyClone.messages) {
+      fbBodyClone.messages = stripReasoning(fbBodyClone.messages);
+    }
     chain.push({ name: fb.name, url: fb.chatEndpoint, key: fb.apiKey, body: fbBodyClone, headers: { 'Authorization': `Bearer ${fb.apiKey}`, 'Content-Type': 'application/json' } });
   }
   return chain;
