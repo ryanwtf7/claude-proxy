@@ -66,6 +66,8 @@ Response (Anthropic format)
 | `HAIKU_MAP_MODEL` | `north-mini-code-free` | Model for `haiku` requests |
 | `HOST` | `0.0.0.0` | Bind address |
 | `PORT` | `4000` | Listen port |
+| `OPENCODE_BASE_URL` | `https://opencode.ai` | Upstream OpenCode API base URL |
+| `OPENCODE_PROXY` | — | HTTP proxy URL for upstream requests |
 
 ## API Endpoints
 

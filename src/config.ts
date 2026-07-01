@@ -47,6 +47,7 @@ export const API_BASE_ZEN_V1 = `${_opencodeBase}/zen/v1/chat/completions`;
 export interface ModelConfig {
   endpoint: string;
   protocol: 'openai' | 'anthropic';
+  primary?: string;
 }
 
 export const MODELS: Record<string, ModelConfig> = {
@@ -93,7 +94,10 @@ export const ROUTES: Record<string, RouteConfig> = {
 };
 
 export function getModelConfig(modelId: string): ModelConfig {
-  return MODELS[modelId] || { endpoint: API_BASE_OPENAI, protocol: 'openai' };
+  const cfg = MODELS[modelId] || { endpoint: API_BASE_OPENAI, protocol: 'openai' };
+  const envPrimary = process.env.PRIMARY_PROVIDER || '';
+  if (envPrimary) cfg.primary = envPrimary;
+  return cfg;
 }
 
 export function routeFor(modelName: string): RouteConfig {
@@ -158,6 +162,14 @@ export function loadFallbackProviders(): FallbackProvider[] {
   const mistralKey = process.env.MISTRAL_KEY;
   if (mistralKey && !providers.some(p => p.name === 'mistral')) {
     providers.push({ name: 'mistral', apiKey: mistralKey, baseUrl: 'https://api.mistral.ai/v1', chatEndpoint: 'https://api.mistral.ai/v1/chat/completions' });
+  }
+  // Free community-hosted providers (no API key required)
+  if (!providers.some(p => p.name === 'pollinations')) {
+    providers.push({ name: 'pollinations', apiKey: '', baseUrl: 'https://text.pollinations.ai/openai', chatEndpoint: 'https://text.pollinations.ai/openai' });
+  }
+  // OVHcloud AI Endpoints — free anonymous tier, 2 RPM
+  if (!providers.some(p => p.name === 'ovhcloud')) {
+    providers.push({ name: 'ovhcloud', apiKey: '', baseUrl: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', chatEndpoint: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions' });
   }
   // Quota-exhausted providers last
   const openaiKey = process.env.OPENAI_KEY;

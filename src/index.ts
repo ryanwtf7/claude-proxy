@@ -2,9 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import chalk from 'chalk';
+import { ProxyAgent } from 'undici';
 import { initDB, logRequest, getDashboardData, getUsageStats, getRecentLogs, getLogsPaginated, deleteLogs, getFilteredStats, closeDB } from './database.js';
 import { anthropicToOpenAI, openaiToAnthropic, estimateInputTokens, estimateTokens, getOutputTokens, extractCacheTokens, extractText, sse, forwardHeaders } from './convert.js';
 import { SECRET_KEY, API_KEY, PROXY, HOST, PORT, MODELS, ROUTES, getModelConfig, routeFor, FALLBACK_PROVIDERS } from './config.js';
+
+const proxyAgent = PROXY ? new ProxyAgent(PROXY) : undefined;
 
 initDB();
 
@@ -57,31 +60,31 @@ function extractErrMsg(resp: Response, text: string): string {
 // Maps OpenCode model IDs to equivalent models supported by each fallback provider
 const MODEL_FALLBACK: Record<string, Record<string, string>> = {
   // Free tier → cheap/small provider models
-  'deepseek-v4-flash-free':  { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'mistral-small-latest' },
-  'mimo-v2.5-free':          { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest' },
-  'nemotron-3-ultra-free':   { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'meta-llama/llama-4-scout-17b-16e-instruct', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest' },
-  'north-mini-code-free':    { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'codestral-latest' },
+  'deepseek-v4-flash-free':  { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2.5-free':          { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'nemotron-3-ultra-free':   { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'meta-llama/llama-4-scout-17b-16e-instruct', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'north-mini-code-free':    { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'codestral-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   // Paid chat models (OpenAI protocol)
-  'glm-5.2':                 { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'glm-5.1':                 { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'glm-5':                   { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest' },
-  'kimi-k2.5':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'kimi-k2.6':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'kimi-k2.7':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'deepseek-v4-pro':         { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'meta-llama/llama-4-scout-17b-16e-instruct', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'deepseek-v4-flash':       { openai: 'gpt-4o-mini',  gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'mistral-small-latest' },
-  'mimo-v2-pro':             { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest' },
-  'mimo-v2-omni':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest' },
-  'mimo-v2.5-pro':           { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest' },
-  'mimo-v2.5':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-flash', groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest' },
+  'glm-5.2':                 { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'glm-5.1':                 { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'glm-5':                   { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'kimi-k2.5':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'kimi-k2.6':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'kimi-k2.7':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'deepseek-v4-pro':         { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'meta-llama/llama-4-scout-17b-16e-instruct', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'deepseek-v4-flash':       { openai: 'gpt-4o-mini',  gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2-pro':             { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2-omni':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2.5-pro':           { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2.5':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-flash', groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   // Paid Anthropic protocol models
-  'minimax-m3':              { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'openai/gpt-oss-120b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'minimax-m2.7':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'openai/gpt-oss-120b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'minimax-m2.5':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'openai/gpt-oss-120b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'qwen3.7-max':             { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'qwen3.7-plus':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'qwen3.6-plus':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
-  'qwen3.5-plus':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest' },
+  'minimax-m3':              { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'openai/gpt-oss-120b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'minimax-m2.7':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'openai/gpt-oss-120b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'minimax-m2.5':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'openai/gpt-oss-120b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'qwen3.7-max':             { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'qwen3.7-plus':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'qwen3.6-plus':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'qwen3.5-plus':            { openai: 'gpt-4o',       gemini: 'gemini-2.0-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
 };
 
 const DEFAULT_FALLBACKS: Record<string, string> = {
@@ -92,26 +95,80 @@ const DEFAULT_FALLBACKS: Record<string, string> = {
   cerebras: 'gemma-4-31b',
   github: 'gpt-4o-mini',
   mistral: 'mistral-small-latest',
+  pollinations: 'openai',
+  ovhcloud: 'gpt-oss-20b',
+};
+
+// Better models for opus-tier requests
+const OPUS_FALLBACKS: Record<string, string> = {
+  openai: 'gpt-4o',
+  gemini: 'gemini-2.0-pro',
+  groq: 'qwen/qwen3-32b',
+  openrouter: 'auto',
+  cerebras: 'zai-glm-4.7',
+  github: 'gpt-4o',
+  mistral: 'mistral-large-latest',
+  pollinations: 'openai',
+  ovhcloud: 'Meta-Llama-3_3-70B-Instruct',
+};
+
+// Mid-range models for sonnet-tier requests
+const SONNET_FALLBACKS: Record<string, string> = {
+  openai: 'gpt-4o-mini',
+  gemini: 'gemini-2.0-flash',
+  groq: 'llama-3.3-70b-versatile',
+  openrouter: 'auto',
+  cerebras: 'gemma-4-31b',
+  github: 'gpt-4o',
+  mistral: 'mistral-small-latest',
+  pollinations: 'openai',
+  ovhcloud: 'Mistral-Small-3.2-24B-Instruct-2506',
 };
 
 // Build provider chain: [OpenCode, ...fallbacks]
-function buildChain(endpoint: string, isAnthropicProto: boolean, body: any) {
+function modelForProvider(provider: string, routeTier: Record<string, string>, origModel: string): string {
+  return routeTier[provider] || DEFAULT_FALLBACKS[provider] || (MODEL_FALLBACK[origModel]?.[provider]) || origModel;
+}
+
+function buildChain(endpoint: string, isAnthropicProto: boolean, body: any, routeKey?: string) {
   const chain: { name: string; url: string; key: string; body: any; headers: Record<string, string> }[] = [];
 
-  const opencodeHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (isAnthropicProto) {
-    opencodeHeaders['x-api-key'] = API_KEY;
-    opencodeHeaders['anthropic-version'] = '2023-06-01';
-  } else {
-    opencodeHeaders['Authorization'] = `Bearer ${API_KEY}`;
-  }
-  if (PROXY) opencodeHeaders['OpenCode-Proxy'] = PROXY;
-  chain.push({ name: `opencode`, url: endpoint, key: API_KEY, body, headers: opencodeHeaders });
-
   const fbBody = isAnthropicProto ? anthropicToOpenAI(body, body.model) : { ...body };
+  const routeTier = routeKey === 'opus' ? OPUS_FALLBACKS : routeKey === 'sonnet' ? SONNET_FALLBACKS : DEFAULT_FALLBACKS;
+
+  // Check if a primary provider is configured for this model
+  const modelCfg = getModelConfig(fbBody.model);
+  const primary = modelCfg.primary;
+  let primaryUsed = false;
+
+  if (primary) {
+    const fb = FALLBACK_PROVIDERS.find(p => p.name === primary);
+    if (fb) {
+      const fbModel = modelForProvider(fb.name, routeTier, fbBody.model);
+      const fbBodyClone = { ...fbBody, model: fbModel };
+      chain.push({ name: fb.name, url: fb.chatEndpoint, key: fb.apiKey, body: fbBodyClone, headers: { 'Authorization': `Bearer ${fb.apiKey}`, 'Content-Type': 'application/json' } });
+      primaryUsed = true;
+    } else {
+      console.warn(`  ${C.warn('!')} primary provider "${primary}" not found in FALLBACK_PROVIDERS, falling back to opencode`);
+    }
+  }
+
+  if (!primaryUsed) {
+    // Default: try opencode first
+    const opencodeHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (isAnthropicProto) {
+      opencodeHeaders['x-api-key'] = API_KEY;
+      opencodeHeaders['anthropic-version'] = '2023-06-01';
+    } else {
+      opencodeHeaders['Authorization'] = `Bearer ${API_KEY}`;
+    }
+    if (PROXY) opencodeHeaders['OpenCode-Proxy'] = PROXY;
+    chain.push({ name: `opencode`, url: endpoint, key: API_KEY, body, headers: opencodeHeaders });
+  }
+
   for (const fb of FALLBACK_PROVIDERS) {
-    const perModel = MODEL_FALLBACK[fbBody.model];
-    const fbModel = (perModel && perModel[fb.name]) || DEFAULT_FALLBACKS[fb.name] || fbBody.model;
+    if (primary && fb.name === primary) continue;
+    const fbModel = modelForProvider(fb.name, routeTier, fbBody.model);
     const fbBodyClone = { ...fbBody, model: fbModel };
     chain.push({ name: fb.name, url: fb.chatEndpoint, key: fb.apiKey, body: fbBodyClone, headers: { 'Authorization': `Bearer ${fb.apiKey}`, 'Content-Type': 'application/json' } });
   }
@@ -266,7 +323,57 @@ async function tryChain<T>(
   onOk: (result: ChainResult) => Promise<T>,
   onAllFailed: () => T,
   isStreaming?: boolean,
+  parallelCount?: number,
 ): Promise<T> {
+  // Fire first `parallelCount` providers simultaneously, take the first success
+  if (parallelCount && parallelCount > 1 && chain.length > 1) {
+    const batch = chain.slice(0, parallelCount);
+    const rest = chain.slice(parallelCount);
+    const errors: { name: string; fatal: boolean; msg: string }[] = [];
+
+    const results = await Promise.allSettled(batch.map(async (item) => {
+      const { name, url, body, headers } = item;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 25000);
+      try {
+        const fetchOpts: any = { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal };
+        if (proxyAgent) fetchOpts.dispatcher = proxyAgent;
+        const resp = await fetch(url, fetchOpts);
+        clearTimeout(timeout);
+        if (resp.ok) {
+          const respText = isStreaming ? '' : await resp.text();
+          return { status: 'ok' as const, result: { text: respText, headers: resp.headers, status: resp.status, name, resp: isStreaming ? resp : undefined } };
+        }
+        const respText = await resp.text().catch(() => '');
+        const errMsg = extractErrMsg(resp, respText);
+        const errClass = classifyError(resp.status, respText);
+        console.log(`  ${chalk.dim(name)} ${chalk.dim('→')} ${errClass === 'fatal' ? C.bad(resp.status) : C.warn(resp.status)} ${chalk.dim(`(${errClass})`)}: ${chalk.dim(errMsg.slice(0, 100))}`);
+        logRequest({ request_id: opts.rid, model: body.model, original_model: opts.origModel, route: opts.routeKey, provider: name, protocol: opts.protocol, is_stream: opts.isStream, thinking: opts.thinking, effort: opts.effort, status: resp.status, duration_ms: elapsed(opts.start), error: errMsg, ip: opts.ip });
+        return { status: 'error' as const, name, fatal: errClass === 'fatal', msg: errMsg };
+      } catch (e: any) {
+        clearTimeout(timeout);
+        console.log(`  ${chalk.dim(name)} ${C.bad('✗')} ${chalk.dim(e.message)}`);
+        logRequest({ request_id: opts.rid, model: body.model, original_model: opts.origModel, route: opts.routeKey, provider: name, protocol: opts.protocol, is_stream: opts.isStream, thinking: opts.thinking, effort: opts.effort, status: 502, duration_ms: elapsed(opts.start), error: e.message, ip: opts.ip });
+        return { status: 'error' as const, name, fatal: false, msg: e.message };
+      }
+    }));
+
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.status === 'ok') {
+        return await onOk(r.value.result);
+      }
+      if (r.status === 'fulfilled' && r.value.status === 'error' && r.value.fatal) {
+        // All providers in this batch errored fatally? Only abort if ALL are fatal
+      }
+    }
+
+    // All parallel failed — continue sequentially with remaining providers
+    const allFailed = errors.length === batch.length;
+    if (!rest.length) return onAllFailed();
+    chain = rest;
+  }
+
+  // Sequential fallback for remaining providers
   for (let i = 0; i < chain.length; i++) {
     const { name, url, body, headers } = chain[i];
     const backoff = i > 0 ? Math.min(1000 * Math.pow(2, i - 1), 4000) : 0;
@@ -275,8 +382,19 @@ async function tryChain<T>(
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 25000);
-      const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+      const fetchOpts: any = { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal };
+      if (proxyAgent) fetchOpts.dispatcher = proxyAgent;
+      const resp = await fetch(url, fetchOpts);
       clearTimeout(timeout);
+
+      const retryAfter = resp.headers.get('retry-after');
+      if (retryAfter && !resp.ok) {
+        const secs = parseInt(retryAfter, 10);
+        if (!isNaN(secs) && secs > 0 && secs <= 120) {
+          console.log(`  ${chalk.dim(name)} ${C.warn('→')} ${chalk.dim(`retry-after: ${secs}s`)}`);
+          await sleep(Math.min(secs * 1000, 30000));
+        }
+      }
 
       if (resp.ok && isStreaming) {
         return await onOk({ text: '', headers: resp.headers, status: resp.status, name, resp });
@@ -292,7 +410,7 @@ async function tryChain<T>(
       const errClass = classifyError(resp.status, respText);
       const sc = resp.status >= 500 ? C.bad(resp.status) : resp.status >= 400 ? C.warn(resp.status) : C.good(resp.status);
       console.log(`  ${chalk.dim(name)} ${chalk.dim('→')} ${sc} ${chalk.dim(`(${errClass})`)}: ${chalk.dim(errMsg.slice(0, 100))}`);
-      logRequest({ request_id: opts.rid, model: opts.modelId, original_model: opts.origModel, route: opts.routeKey, provider: name, protocol: opts.protocol, is_stream: opts.isStream, thinking: opts.thinking, effort: opts.effort, status: resp.status, duration_ms: elapsed(opts.start), error: errMsg, ip: opts.ip });
+      logRequest({ request_id: opts.rid, model: body.model, original_model: opts.origModel, route: opts.routeKey, provider: name, protocol: opts.protocol, is_stream: opts.isStream, thinking: opts.thinking, effort: opts.effort, status: resp.status, duration_ms: elapsed(opts.start), error: errMsg, ip: opts.ip });
 
       if (errClass === 'fatal' || i >= chain.length - 1) {
         return onAllFailed();
@@ -300,13 +418,19 @@ async function tryChain<T>(
       continue;
     } catch (e: any) {
       console.log(`  ${chalk.dim(name)} ${C.bad('✗')} ${chalk.dim(e.message)}`);
-      logRequest({ request_id: opts.rid, model: opts.modelId, original_model: opts.origModel, route: opts.routeKey, provider: name, protocol: opts.protocol, is_stream: opts.isStream, thinking: opts.thinking, effort: opts.effort, status: 502, duration_ms: elapsed(opts.start), error: e.message, ip: opts.ip });
+      logRequest({ request_id: opts.rid, model: body.model, original_model: opts.origModel, route: opts.routeKey, provider: name, protocol: opts.protocol, is_stream: opts.isStream, thinking: opts.thinking, effort: opts.effort, status: 502, duration_ms: elapsed(opts.start), error: e.message, ip: opts.ip });
       if (i < chain.length - 1) continue;
       return onAllFailed();
     }
   }
   return onAllFailed();
 }
+
+export const ROUTE_PARALLEL: Record<string, number> = {
+  opus: 3,
+  sonnet: 2,
+  haiku: 0,
+};
 
 function errResponse(status: number, msg: string): object {
   return { type: 'error', error: { type: 'api_error', message: msg } };
@@ -341,7 +465,8 @@ async function handleMessages(req: express.Request, res: express.Response) {
   const commonOpts = { start, rid, modelId, origModel, routeKey: route.match[0], protocol, isStream, thinking: thinkingType, effort, ip: getIP(req) };
 
   if (protocol === 'anthropic') {
-    const chain = buildChain(endpoint, true, reqBody);
+    const chain = buildChain(endpoint, true, reqBody, route.match[0]);
+    const parallel = ROUTE_PARALLEL[route.match[0]] || 0;
 
     if (!isStream) {
       await tryChain(chain, { ...commonOpts, isAnthropicProto: true }, async (r) => {
@@ -358,7 +483,7 @@ async function handleMessages(req: express.Request, res: express.Response) {
       }, () => {
         res.status(502).json(errResponse(502, 'All upstream providers failed'));
         return null as any;
-      });
+      }, false, parallel);
     } else {
       const estInput = estimateInputTokens(reqBody);
 
@@ -421,12 +546,13 @@ async function handleMessages(req: express.Request, res: express.Response) {
       }, () => {
         res.status(502).json(errResponse(502, 'All upstream providers failed'));
         return null as any;
-      }, true);
+      }, true, parallel);
     }
   } else {
     // ── OpenAI protocol ─────────────────────────────────────────
     const oaiBody = anthropicToOpenAI(reqBody, modelId);
-    const chain = buildChain(endpoint, false, oaiBody);
+    const chain = buildChain(endpoint, false, oaiBody, route.match[0]);
+    const parallel = ROUTE_PARALLEL[route.match[0]] || 0;
 
     if (!isStream) {
       await tryChain(chain, { ...commonOpts, isAnthropicProto: false }, async (r) => {
@@ -444,7 +570,7 @@ async function handleMessages(req: express.Request, res: express.Response) {
       }, () => {
         res.status(502).json(errResponse(502, 'All upstream providers failed'));
         return null as any;
-      });
+      }, false, parallel);
     } else {
       const estInput = estimateInputTokens(reqBody);
       const streamBody = { ...oaiBody, stream: true, stream_options: { include_usage: true } };
@@ -476,7 +602,7 @@ async function handleMessages(req: express.Request, res: express.Response) {
       }, () => {
         res.status(502).json(errResponse(502, 'All upstream providers failed'));
         return null as any;
-      }, true);
+      }, true, parallel);
     }
   }
 }
@@ -676,7 +802,7 @@ footer{border-top:1px solid var(--border);padding:16px;text-align:center;font-si
 <nav class="topbar">
   <div class="brand"><span class="brand-mark">C</span> Claude Dash</div>
   <div class="nav-tabs">
-    <button type="button" class="tab-btn active" data-view="welcome">Welcome</button>
+    <button type="button" class="tab-btn active" data-view="welcome">Status</button>
     <button type="button" class="tab-btn" data-view="logs">Logs</button>
     <button type="button" class="tab-btn" data-view="docs">Docs</button>
   </div>
@@ -684,29 +810,32 @@ footer{border-top:1px solid var(--border);padding:16px;text-align:center;font-si
 
 <main id="welcome" class="view active">
   <section class="welcome-wrap">
-    <div class="welcome-badge">AI PROXY GATEWAY</div>
-    <h1>Claude <span>Dash</span></h1>
-    <p class="welcome-sub">
-      Multi-provider proxy translating Anthropic-format requests to 7 upstream APIs.
-      Routes Claude models to OpenCode equivalents with automatic format conversion and fallback chain.
-    </p>
-    <div class="welcome-cta">
-      <button type="button" class="btn btn-primary js-go-logs">View Logs</button>
-      <button type="button" class="btn js-go-docs">Read Docs</button>
-    </div>
-    <div class="stats-grid" id="welcome-stats" style="margin-top:40px;text-align:left"></div>
+    <div class="welcome-badge">SYSTEM STATUS</div>
+    <div id="welcome-grid" style="text-align:left"></div>
+    <div id="provider-status" style="margin-top:20px;text-align:left"></div>
+    <div id="recent-activity" style="margin-top:20px;text-align:left"></div>
   </section>
 </main>
 
 <main id="logs" class="view">
   <section class="logs-wrap">
     <div class="stats-grid" id="stats"></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <h2 style="margin:0">Recent Requests</h2>
+      <input id="log-filter" type="text" placeholder="Filter by model, provider, status..." style="flex:1;min-width:180px;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);color:var(--text);font:400 13px var(--font-sans);border-radius:6px;outline:none">
+      <span id="log-count" style="font-size:12px;color:var(--muted)">0 records</span>
+      <button id="log-refresh" class="btn" style="padding:6px 12px;font-size:12px">Refresh</button>
+    </div>
+    <div id="logs-table"><div class="table-wrap"><table><thead><tr><th>Time</th><th>Model</th><th>Route</th><th>Provider</th><th>Status</th><th>Duration</th><th>In</th><th>Out</th><th>Error</th></tr></thead><tbody id="log-body"></tbody></table></div></div>
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;align-items:center">
+      <button id="page-prev" class="btn" style="padding:5px 10px;font-size:11px">← Prev</button>
+      <span id="page-info" style="font-size:12px;color:var(--muted)">Page 1</span>
+      <button id="page-next" class="btn" style="padding:5px 10px;font-size:11px">Next →</button>
+    </div>
     <h2>Top Models</h2>
     <div class="model-grid" id="models"></div>
     <h2>Providers</h2>
     <div class="model-grid" id="providers"></div>
-    <h2>Recent Requests</h2>
-    <div id="logs-table"><div class="table-wrap"><table><thead><tr><th>Time</th><th>Model</th><th>Route</th><th>Provider</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Error</th></tr></thead><tbody id="log-body"></tbody></table></div></div>
   </section>
 </main>
 
@@ -714,40 +843,37 @@ footer{border-top:1px solid var(--border);padding:16px;text-align:center;font-si
   <article class="docs-page">
     <p class="eyebrow">Documentation</p>
     <h2>Claude Dash</h2>
-    <p>
-      Drop-in replacement for the Anthropic <code>/v1/messages</code> API. Send standard Claude-format requests and the proxy automatically routes them to the configured OpenCode model, converts formats, and forwards responses. Falls back through 7 providers.
-    </p>
+    <p>Drop-in replacement for the Anthropic <code>/v1/messages</code> API. Sends Claude-format requests to OpenCode and falls back through 7 providers.</p>
     <div class="code-block"><pre>Base URL: <span id="baseUrlPlaceholder">http://localhost:4000</span></pre></div>
 
-    <h3 style="font-size:14px;font-weight:600;color:var(--text);margin:28px 0 10px;">Authentication</h3>
+    <h3>Authentication</h3>
     <p>Pass your API key as the <code>x-api-key</code> header:</p>
     <div class="code-block"><pre>curl -H "x-api-key: your-secret-key" -H "Content-Type: application/json" \\
   -H "anthropic-version: 2023-06-01" \\
   -d '{"model":"sonnet","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}' \\
   <span id="baseUrlPlaceholder2">http://localhost:4000</span>/v1/messages</pre></div>
 
-    <h3 style="font-size:14px;font-weight:600;color:var(--text);margin:28px 0 10px;">Available Models</h3>
-    <p>The proxy supports 23 models across three tiers. Models with matching endpoint suffix share the same route.</p>
+    <h3>Available Models</h3>
+    <p>The proxy supports <strong>${Object.keys(MODELS).length} models</strong> across three tiers.</p>
     <div id="docsModels"></div>
 
-    <h3 style="font-size:14px;font-weight:600;color:var(--text);margin:28px 0 10px;">Route Mappings</h3>
-    <p>Claude model names are mapped to OpenCode equivalents:</p>
+    <h3>Route Mappings</h3>
+    <p>Short names are mapped to OpenCode model IDs:</p>
     <div id="docsRoutes"></div>
 
-    <h3 style="font-size:14px;font-weight:600;color:var(--text);margin:28px 0 10px;">Fallback Providers</h3>
-    <p>When OpenCode fails, the proxy falls back through 7 providers in order. Each OpenCode model is mapped to the closest equivalent on each provider (e.g., <code>deepseek-v4-flash-free</code> → <code>gpt-4o-mini</code> on OpenAI, <code>llama-3.1-8b-instant</code> on Groq). Default model shown if no per-model mapping exists.</p>
+    <h3>Fallback Providers</h3>
+    <p>When OpenCode fails, the chain tries each provider in order: Groq → OpenRouter → Cerebras → GitHub → Mistral → Pollinations → OVHcloud → OpenAI → Gemini.</p>
     <div id="docsFallbacks"></div>
 
-    <h3 style="font-size:14px;font-weight:600;color:var(--text);margin:28px 0 10px;">Request Flow</h3>
+    <h3>Request Flow</h3>
     <p>
-      1. Incoming <code>/v1/messages</code> request is matched to a route by model name<br>
-      2. Body is converted from Anthropic to OpenAI format if needed<br>
-      3. Primary provider (OpenCode) is tried first<br>
-      4. On failure, fallback providers are tried in sequence with exponential backoff<br>
-      5. Successful response is converted back to Anthropic format and returned
+      1. Model name matched to route → OpenCode model ID<br>
+      2. Anthropic body converted to OpenAI format if needed<br>
+      3. OpenCode tried first; on failure falls through providers with exponential backoff<br>
+      4. Response converted back to Anthropic format and returned
     </p>
 
-    <h3 style="font-size:14px;font-weight:600;color:var(--text);margin:28px 0 10px;">Endpoints</h3>
+    <h3>Endpoints</h3>
     <div id="docsEndpoints"></div>
   </article>
 </main>
@@ -755,10 +881,12 @@ footer{border-top:1px solid var(--border);padding:16px;text-align:center;font-si
 <footer>Claude Dash &mdash; Multi-provider AI API gateway</footer>
 
 <script>
-const K='${authKey}';
-const MODELS_DATA = ${modelsJson};
-const ROUTES_DATA = ${routesJson};
-const FALLBACKS_DATA = ${fallbacksJson};
+var K='${authKey}';
+var MODELS_DATA = ${modelsJson};
+var ROUTES_DATA = ${routesJson};
+var FALLBACKS_DATA = ${fallbacksJson};
+var logPage = 0;
+var logFilter = '';
 
 document.getElementById('baseUrlPlaceholder').textContent = location.origin;
 document.getElementById('baseUrlPlaceholder2').textContent = location.origin;
@@ -770,16 +898,14 @@ document.querySelectorAll('.tab-btn').forEach(function(b){b.addEventListener('cl
   document.querySelectorAll('.view').forEach(function(v){v.classList.remove('active')});
   b.classList.add('active');
   document.getElementById(t).classList.add('active');
+  if (t==='logs') loadLogs();
 })});
-document.querySelector('.js-go-logs')&&document.querySelector('.js-go-logs').addEventListener('click',function(){document.querySelector('.tab-btn[data-view=\"logs\"]').click()});
-document.querySelector('.js-go-docs')&&document.querySelector('.js-go-docs').addEventListener('click',function(){document.querySelector('.tab-btn[data-view=\"docs\"]').click()});
 
-// ── Category toggle click handler (event delegation) ──
+// ── Category toggle ──
 document.addEventListener('click', function(e){
   var btn=e.target;
   while(btn && !btn.classList.contains('category-toggle')) btn=btn.parentNode;
   if(!btn) return;
-  e.preventDefault();
   var body=btn.nextElementSibling;
   if(body && body.classList.contains('category-body')){
     body.classList.toggle('open');
@@ -787,98 +913,162 @@ document.addEventListener('click', function(e){
   }
 });
 
-// ── Docs: Models ──
+// ── Docs Builders ──
 (function(){
   var tiers={};
   MODELS_DATA.forEach(function(m){
     var t=m.endpoint.split('/').pop()||'other';
-    if(!tiers[t])tiers[t]=[];
-    tiers[t].push(m);
+    if(!tiers[t])tiers[t]=[]; tiers[t].push(m);
   });
   var html='',first=true;
   Object.keys(tiers).forEach(function(t){
-    var label=t==='completions'?'Paid (Zen Go)':t==='messages'?'Anthropic Protocol':t==='chat/completions'||t==='completions'?'Paid':'Free';
+    var label=t==='completions'?'Paid (Zen Go)':t==='messages'?'Anthropic Protocol':'Free';
     html+='<button class="category-toggle'+(first?' open':'')+'"><span class="arrow">&#9654;</span> '+label+' ('+tiers[t].length+' models)</button>';
     html+='<div class="category-body'+(first?' open':'')+'"><div class="endpoint-list">';
-    tiers[t].forEach(function(m){
-      var ep=m.endpoint;
-      html+='<div class="endpoint"><span class="method '+m.protocol+'">'+m.protocol+'</span><span class="ep-url">'+m.id+'</span><span class="ep-detail">'+ep+'</span></div>';
-    });
-    html+='</div></div>';
-    first=false;
+    tiers[t].forEach(function(m){html+='<div class="endpoint"><span class="method '+m.protocol+'">'+m.protocol+'</span><span class="ep-url">'+m.id+'</span><span class="ep-detail">'+m.endpoint+'</span></div>';});
+    html+='</div></div>'; first=false;
   });
   document.getElementById('docsModels').innerHTML=html;
 })();
 
-// ── Docs: Routes ──
 (function(){
   var html='<div class="endpoint-list">';
-  ROUTES_DATA.forEach(function(r){
-    html+='<div class="endpoint"><span class="ep-url">'+r.key+'</span><span class="ep-detail">→ '+r.model+'</span><span style="font-size:11px;color:var(--muted);width:100%">matches: '+r.match.join(', ')+'</span></div>';
-  });
+  ROUTES_DATA.forEach(function(r){html+='<div class="endpoint"><span class="ep-url">'+r.key+'</span><span class="ep-detail">→ '+r.model+'</span><span style="font-size:11px;color:var(--muted);width:100%">matches: '+r.match.join(', ')+'</span></div>';});
   html+='</div>';
   document.getElementById('docsRoutes').innerHTML=html;
 })();
 
-// ── Docs: Fallbacks ──
 (function(){
   var pmeta={
-    groq:{model:'llama-3.3-70b-versatile',url:'api.groq.com',models:'Llama 3.1/3.3, Qwen3, GPT-OSS, Llama 4 Scout'},
-    openrouter:{model:'auto (routes to best free)',url:'openrouter.ai',models:'20+ free models via single endpoint'},
-    cerebras:{model:'gemma-4-31b',url:'api.cerebras.ai',models:'Gemma 4, ZAI-GLM 4.7, GPT-OSS'},
-    github:{model:'gpt-4o-mini',url:'models.inference.ai.azure.com',models:'GPT-4o, GPT-4o-mini, Llama, Phi'},
-    mistral:{model:'mistral-small-latest',url:'api.mistral.ai',models:'Mistral Small/Large, Codestral'},
-    openai:{model:'gpt-4o-mini',url:'api.openai.com',models:'GPT-4o, GPT-4o-mini'},
-    gemini:{model:'gemini-2.0-flash',url:'generativelanguage.googleapis.com',models:'Gemini 2.0 Flash/Pro'},
+    groq:{model:'llama-3.3-70b-versatile',models:'Llama 3.1/3.3, Qwen3, Llama 4 Scout'},
+    openrouter:{model:'auto',models:'20+ free models'},
+    cerebras:{model:'gemma-4-31b',models:'Gemma 4, ZAI-GLM 4.7'},
+    github:{model:'gpt-4o-mini',models:'GPT-4o, GPT-4o-mini, Llama'},
+    mistral:{model:'mistral-small-latest',models:'Mistral Small/Large, Codestral'},
+    pollinations:{model:'openai',models:'GPT-OSS 20B (free, no key)'},
+    ovhcloud:{model:'gpt-oss-20b',models:'Qwen3, Llama 3.3, Mistral (free, no key)'},
+    openai:{model:'gpt-4o-mini',models:'GPT-4o, GPT-4o-mini'},
+    gemini:{model:'gemini-2.0-flash',models:'Gemini 2.0 Flash/Pro'},
   };
   var html='<div class="endpoint-list">';
   FALLBACKS_DATA.forEach(function(f){
     var m=pmeta[f]||{};
-    html+='<div class="endpoint"><span class="method fallback">'+f+'</span><span class="ep-url">'+f+'</span><span class="ep-detail" style="font-size:10px">→ '+m.model+'</span><span style="font-size:10px;color:var(--muted);width:100%">'+m.models+'</span></div>';
+    html+='<div class="endpoint"><span class="method fallback">'+f+'</span><span class="ep-url">'+f+'</span><span class="ep-detail">'+m.model+'</span><span style="font-size:10px;color:var(--muted);width:100%">'+m.models+'</span></div>';
   });
-  if(!FALLBACKS_DATA.length)html+='<div class="endpoint"><span style="color:var(--muted)">No fallback providers configured</span></div>';
+  if(!FALLBACKS_DATA.length)html+='<div class="endpoint"><span style="color:var(--muted)">None configured</span></div>';
   html+='</div>';
   document.getElementById('docsFallbacks').innerHTML=html;
 })();
 
-// ── Docs: Endpoints ──
 (function(){
   var eps=[
-    {m:'POST',path:'/v1/messages',d:'Anthropic-format chat completions (main endpoint)'},
-    {m:'POST',path:'/zen/v1/chat/completions',d:'OpenAI-format completions targeting free models'},
-    {m:'GET',path:'/v1/models',d:'List available models'},
+    {m:'POST',path:'/v1/messages',d:'Anthropic chat completions'},
+    {m:'GET',path:'/v1/models',d:'List models'},
+    {m:'GET',path:'/health',d:'Health + usage'},
     {m:'GET',path:'/dash',d:'Dashboard UI'},
-    {m:'GET',path:'/dash/data',d:'Dashboard stats + recent logs (JSON)'},
-    {m:'GET',path:'/health',d:'Health check'},
+    {m:'GET',path:'/dash/data',d:'Stats JSON'},
+    {m:'DELETE',path:'/dash/history',d:'Delete logs'},
   ];
   var html='<div class="endpoint-list">';
-  eps.forEach(function(ep){
-    html+='<div class="endpoint"><span class="method '+ep.m.toLowerCase()+'">'+ep.m+'</span><span class="ep-url">'+ep.path+'</span><span class="ep-detail">'+ep.d+'</span></div>';
-  });
+  eps.forEach(function(ep){html+='<div class="endpoint"><span class="method">'+ep.m+'</span><span class="ep-url">'+ep.path+'</span><span class="ep-detail">'+ep.d+'</span></div>';});
   html+='</div>';
   document.getElementById('docsEndpoints').innerHTML=html;
 })();
 
-// ── Dashboard data loading ──
+// ── Helpers ──
 function n(v){return v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(1)+'K':String(v)}
+function badge(status,label){
+  var ok=status>=200&&status<400;
+  var color=ok?'var(--green)':status>=400&&status<500?'var(--accent)':'var(--red)';
+  return '<span style="display:inline-block;padding:1px 7px;font:600 10px var(--font-mono);background:'+color+'20;color:'+color+';border-radius:3px">'+(label||status)+'</span>';
+}
 
+// ── Load welcome data ──
+async function loadWelcome(){
+  try{
+    var r=await fetch('/dash/data?key='+K);var d=await r.json();var s=d.stats;
+    document.getElementById('welcome-grid').innerHTML=
+      '<div class="stats-grid">'+
+      '<div class="stat-card"><h3>Requests</h3><div class="value">'+s.total_requests+'</div><div class="sub">'+s.today_requests+' today</div></div>'+
+      '<div class="stat-card"><h3>Input</h3><div class="value">'+n(s.total_input_tokens)+'</div><div class="sub">'+n(s.today_input_tokens)+' today</div></div>'+
+      '<div class="stat-card"><h3>Output</h3><div class="value">'+n(s.total_output_tokens)+'</div><div class="sub">'+n(s.today_output_tokens)+' today</div></div>'+
+      '<div class="stat-card"><h3>Cache</h3><div class="value">'+n(s.total_cache)+'</div><div class="sub">'+s.total_requests+' hits</div></div>'+
+      '<div class="stat-card"><h3>Models</h3><div class="value">'+Object.keys(s.models).length+'</div><div class="sub">used of ${Object.keys(MODELS).length} configured</div></div>'+
+      '<div class="stat-card"><h3>Providers</h3><div class="value">'+(s.providers?Object.keys(s.providers).length:'0')+'</div><div class="sub">active of '+(FALLBACKS_DATA.length||'0')+' configured</div></div>'+
+      '</div>';
+
+    var provHtml='<h2 style="margin-bottom:10px">Provider Status</h2><div class="endpoint-list">';
+    var allProviders=['opencode','groq','openrouter','cerebras','github','mistral','pollinations','ovhcloud','openai','gemini'];
+    allProviders.forEach(function(p){
+      var v=s.providers&&s.providers[p];
+      var active=v&&v.requests>0;
+      var dot=active?'<span style="color:var(--green);font-size:14px">●</span>':'<span style="color:var(--muted);font-size:14px">○</span>';
+      var stats=active?' '+v.requests+' req · '+n(v.input)+' in · '+n(v.output)+' out':' no activity';
+      provHtml+='<div class="endpoint"><span>'+dot+'</span><span class="ep-url">'+p+'</span><span class="ep-detail" style="font-size:11px">'+stats+'</span></div>';
+    });
+    provHtml+='</div>';
+    document.getElementById('provider-status').innerHTML=provHtml;
+
+    var recent=s.total_requests>0&&d.recent?d.recent.slice(0,5):[];
+    if(recent.length){
+      var actHtml='<h2 style="margin-bottom:10px">Recent Activity</h2><div class="endpoint-list">';
+      recent.forEach(function(r){
+        var ok=r.status>=200&&r.status<400;
+        actHtml+='<div class="endpoint"><span class="ep-url" style="font-size:11px;color:var(--muted)">'+(r.timestamp||'').slice(11,19)+'</span><span class="ep-url" style="font-size:12px">'+(r.model||'')+'</span><span style="font-size:11px;color:var(--muted)">→ '+(r.provider||'')+'</span>'+badge(r.status)+'<span class="ep-detail" style="font-size:11px">'+(r.duration_ms||0)+'ms</span></div>';
+      });
+      actHtml+='</div>';
+      document.getElementById('recent-activity').innerHTML=actHtml;
+    } else {
+      document.getElementById('recent-activity').innerHTML='<div class="endpoint-list"><div class="endpoint"><span style="color:var(--muted)">No requests yet — send a test request to see activity here</span></div></div>';
+    }
+  }catch(e){document.getElementById('welcome-grid').innerHTML='<p style="color:var(--red)">Error loading: '+e.message+'</p>';}
+}
+
+// ── Load logs ──
+async function loadLogs(){
+  var limit=50;
+  var offset=logPage*limit;
+  try{
+    var r=await fetch('/dash/logs?key='+K+'&limit='+limit+'&offset='+offset);var d=await r.json();
+    var logs=d.logs||[];var hasMore=d.has_more;
+    document.getElementById('page-info').textContent='Page '+(logPage+1)+(hasMore?'+':'');
+    document.getElementById('page-prev').style.opacity=logPage>0?'1':'0.3';
+    document.getElementById('page-next').style.opacity=hasMore?'1':'0.3';
+
+    var filter=document.getElementById('log-filter').value.toLowerCase();
+    if(filter) logs=logs.filter(function(r){return((r.model||'')+(r.provider||'')+(r.route||'')+String(r.status)).toLowerCase().indexOf(filter)>=0;});
+
+    document.getElementById('log-count').textContent=logs.length+' records'+(filter?' filtered':'');
+    var l='';
+    logs.forEach(function(r){
+      var ok=r.status>=200&&r.status<400;
+      var err=(r.error||'').replace(/[\\n\\r]+/g,' ').slice(0,50);
+      l+='<tr>'+
+        '<td style="color:var(--muted);font-size:11px">'+(r.timestamp||'').slice(11,19)+'</td>'+
+        '<td><span style="font-weight:600;font-size:12px">'+(r.model||'')+'</span></td>'+
+        '<td style="color:var(--muted);font-size:11px">'+(r.route||'')+'</td>'+
+        '<td>'+badge(r.status,r.provider||'')+'</td>'+
+        '<td>'+badge(r.status)+'</td>'+
+        '<td style="color:var(--muted);font-size:11px">'+(r.duration_ms||0)+'ms</td>'+
+        '<td style="font-size:11px">'+n(r.tokens_input||0)+'</td>'+
+        '<td style="font-size:11px">'+n(r.tokens_output||0)+'</td>'+
+        '<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;color:var(--red);font-size:11px">'+err+'</td>'+
+        '</tr>';
+    });
+    document.getElementById('log-body').innerHTML=l||'<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">No logs to show</td></tr>';
+  }catch(e){document.getElementById('logs-table').innerHTML='<p style="color:var(--red)">Error: '+e.message+'</p>';}
+}
+
+// ── Load all data ──
 async function load(){
   try{
     var r=await fetch('/dash/data?key='+K);var d=await r.json();var s=d.stats;
 
     document.getElementById('stats').innerHTML=
-      '<div class="stat-card"><h3>Total Requests</h3><div class="value">'+s.total_requests+'</div><div class="sub">'+s.today_requests+' today</div></div>'+
-      '<div class="stat-card"><h3>Input Tokens</h3><div class="value">'+n(s.total_input_tokens)+'</div><div class="sub">'+n(s.today_input_tokens)+' today</div></div>'+
-      '<div class="stat-card"><h3>Output Tokens</h3><div class="value">'+n(s.total_output_tokens)+'</div><div class="sub">'+n(s.today_output_tokens)+' today</div></div>'+
+      '<div class="stat-card"><h3>Requests</h3><div class="value">'+s.total_requests+'</div><div class="sub">'+s.today_requests+' today</div></div>'+
+      '<div class="stat-card"><h3>Input</h3><div class="value">'+n(s.total_input_tokens)+'</div><div class="sub">'+n(s.today_input_tokens)+' today</div></div>'+
+      '<div class="stat-card"><h3>Output</h3><div class="value">'+n(s.total_output_tokens)+'</div><div class="sub">'+n(s.today_output_tokens)+' today</div></div>'+
       '<div class="stat-card"><h3>Cache</h3><div class="value">'+n(s.total_cache)+'</div></div>';
-
-    document.getElementById('welcome-stats').innerHTML=
-      '<div class="stat-card"><h3>Total Requests</h3><div class="value">'+s.total_requests+'</div><div class="sub">'+s.today_requests+' today</div></div>'+
-      '<div class="stat-card"><h3>Input Tokens</h3><div class="value">'+n(s.total_input_tokens)+'</div><div class="sub">'+n(s.today_input_tokens)+' today</div></div>'+
-      '<div class="stat-card"><h3>Output Tokens</h3><div class="value">'+n(s.total_output_tokens)+'</div><div class="sub">'+n(s.today_output_tokens)+' today</div></div>'+
-      '<div class="stat-card"><h3>Cache Tokens</h3><div class="value">'+n(s.total_cache)+'</div></div>'+
-      '<div class="stat-card"><h3>Models Used</h3><div class="value">'+Object.keys(s.models).length+'</div><div class="sub">'+'${Object.keys(MODELS).length}'+' configured</div></div>'+
-      '<div class="stat-card"><h3>Active Providers</h3><div class="value">'+(s.providers?Object.keys(s.providers).length:'0')+'</div><div class="sub">'+(FALLBACKS_DATA.length||'0')+' configured</div></div>';
 
     var mc='';
     Object.keys(s.models).forEach(function(k){
@@ -894,20 +1084,18 @@ async function load(){
         pc+='<div class="model-card"><h3>'+k+'</h3><div class="detail">'+v.requests+' req</div><div class="tokens">'+n(v.input)+' in / '+n(v.output)+' out / '+n(v.cache)+' cache</div></div>';
       });
     }
-    var pel=document.getElementById('providers');
-    if(pel)pel.innerHTML=pc||'<div class="stat-card">No data yet</div>';
+    document.getElementById('providers').innerHTML=pc||'<div class="stat-card">No data yet</div>';
 
-    var l='';
-    (d.recent||[]).forEach(function(r){
-      var ok=r.status>=200&&r.status<400;
-      var err=(r.error||'').replace(/[\\n\\r]+/g,' ').slice(0,60);
-      l+='<tr><td>'+(r.timestamp||'').slice(11,19)+'</td><td>'+(r.model||'')+'</td><td>'+(r.route||'')+'</td><td>'+(r.provider||'')+'</td><td class="'+(ok?'status-ok':'status-err')+'">'+r.status+'</td><td>'+(r.duration_ms||0)+'ms</td><td>'+(r.success?n((r.tokens_input||0)+(r.tokens_output||0)):'FAIL')+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">'+err+'</td></tr>';
-    });
-    document.getElementById('log-body').innerHTML=l||'<tr><td colspan="8">No logs yet</td></tr>';
-  }catch(e){document.getElementById('logs-table').innerHTML='<p style=\"color:var(--red)\">Error: '+e.message+'</p>';}
+    loadWelcome();
+  }catch(e){}
 }
 load();
 setInterval(load,5000);
+
+document.getElementById('log-filter').addEventListener('input',function(){logPage=0;loadLogs();});
+document.getElementById('page-prev').addEventListener('click',function(){if(logPage>0){logPage--;loadLogs();}});
+document.getElementById('page-next').addEventListener('click',function(){logPage++;loadLogs();});
+document.getElementById('log-refresh').addEventListener('click',function(){loadLogs();});
 </script>
 </body>
 </html>`;
@@ -958,16 +1146,7 @@ const C = {
   info: chalk.hex('#6b8595'),
   dim: chalk.dim,
   bold: chalk.bold,
-  bar: chalk.hex('#d97757').dim,
 };
-
-function printHeader() {
-  console.log('');
-  console.log(C.bar('  ┌──────────────────────────────────────────────────────────┐'));
-  console.log(C.bar('  │') + C.accentBold('                Claude Dash — Terminal                    ') + C.bar('│'));
-  console.log(C.bar('  └──────────────────────────────────────────────────────────┘'));
-  console.log('');
-}
 
 function statusColor(s: number): string {
   if (s >= 200 && s < 300) return C.good(String(s));
@@ -1045,15 +1224,18 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 // ── Start ────────────────────────────────────────────────────────────────────
+console.clear();
+const useTUI = process.argv.includes('--tui') || process.env.TUI === '1';
 app.listen(PORT, HOST, () => {
-  printHeader();
+  if (useTUI) {
+    import('./tui.js').then(m => m.startTUI());
+    return;
+  }
   const p = '  ';
-  console.log(p + C.muted('API') + '      ' + C.accent(`http://${HOST}:${PORT}`));
-  console.log(p + C.muted('Dash') + '     ' + C.accent(`http://${HOST}:${PORT}/dash`));
-  console.log(p + C.muted('Models') + '    ' + C.bold(String(Object.keys(MODELS).length)) + C.dim(' configured'));
-  const fb = FALLBACK_PROVIDERS.map(f => f.name).join(', ') || C.dim('none');
-  console.log(p + C.muted('Chain') + '    ' + C.info(fb));
+  console.log(`  ${C.accent('●')} ${C.bold('Claude Dash')} ${C.dim('running on')} ${C.accent(`http://${HOST}:${PORT}`)}`);
+  console.log(`  ${C.dim('  dash')} ${C.dim('→')} ${C.muted(`http://${HOST}:${PORT}/dash`)}`);
+  console.log(`  ${C.dim('  models')} ${C.dim('→')} ${C.bold(String(Object.keys(MODELS).length))} ${C.dim('· chain:')} ${C.info(FALLBACK_PROVIDERS.map(f => f.name).join(', ') || 'none')}`);
   console.log('');
-  setInterval(printStats, 30000);
+  setInterval(printStats, 120000);
   printStats();
 });
