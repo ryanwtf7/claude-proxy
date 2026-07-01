@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 app.set('trust proxy', true);
 
-const RETRYABLE = new Set([429, 502, 503, 504]);
+const RETRYABLE = new Set([413, 429, 502, 503, 504]);
 const AUTH_ERRORS = new Set([401, 403]);
 const QUOTA_ERRORS = new Set([402, 429]);
 
@@ -157,7 +157,7 @@ function buildChain(endpoint: string, isAnthropicProto: boolean, body: any, rout
     const fb = FALLBACK_PROVIDERS.find(p => p.name === primary);
     if (fb) {
       const fbModel = modelForProvider(fb.name, routeTier, fbBody.model);
-      const fbBodyClone = { ...fbBody, model: fbModel };
+      const fbBodyClone = { ...fbBody, model: fbModel, max_tokens: Math.min(fbBody.max_tokens || 8000, 8000) };
       if (!PROVIDERS_WITH_REASONING.has(fb.name) && fbBodyClone.messages) {
         fbBodyClone.messages = stripReasoning(fbBodyClone.messages);
       }
@@ -184,7 +184,7 @@ function buildChain(endpoint: string, isAnthropicProto: boolean, body: any, rout
   for (const fb of FALLBACK_PROVIDERS) {
     if (primary && fb.name === primary) continue;
     const fbModel = modelForProvider(fb.name, routeTier, fbBody.model);
-    const fbBodyClone = { ...fbBody, model: fbModel };
+    const fbBodyClone = { ...fbBody, model: fbModel, max_tokens: Math.min(fbBody.max_tokens || 8000, 8000) };
     if (!PROVIDERS_WITH_REASONING.has(fb.name) && fbBodyClone.messages) {
       fbBodyClone.messages = stripReasoning(fbBodyClone.messages);
     }
@@ -593,8 +593,16 @@ async function handleMessages(req: express.Request, res: express.Response) {
       const estInput = estimateInputTokens(reqBody);
       const streamBody = { ...oaiBody, stream: true, stream_options: { include_usage: true } };
 
-      // Rebuild chain with streaming body — preserve per-provider model mapping
-      const streamChain = chain.map(c => ({ ...c, body: { ...streamBody, model: c.body.model } }));
+      // Rebuild chain with streaming body — preserve per-provider model mapping,
+      // strip reasoning for providers that don't support it, cap tokens for fallbacks
+      const MAX_FALLBACK_TOKENS = 8000;
+      const streamChain = chain.map(c => {
+        const body: any = { ...streamBody, model: c.body.model, max_tokens: Math.min(streamBody.max_tokens || MAX_FALLBACK_TOKENS, MAX_FALLBACK_TOKENS) };
+        if (!PROVIDERS_WITH_REASONING.has(c.name) && body.messages) {
+          body.messages = stripReasoning(body.messages);
+        }
+        return { ...c, body };
+      });
 
       await tryChain(streamChain, { ...commonOpts, isAnthropicProto: false, isStream: true }, async (r) => {
         res.setHeader('Content-Type', 'text/event-stream');
