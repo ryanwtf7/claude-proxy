@@ -273,7 +273,10 @@ async function tryChain<T>(
     if (backoff) await sleep(backoff);
 
     try {
-      const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 25000);
+      const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+      clearTimeout(timeout);
 
       if (resp.ok && isStreaming) {
         return await onOk({ text: '', headers: resp.headers, status: resp.status, name, resp });
