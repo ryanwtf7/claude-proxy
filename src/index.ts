@@ -16,6 +16,42 @@ app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 app.set('trust proxy', true);
 
+const PROVIDER_CONTEXT_LIMITS: Record<string, number> = {
+  groq: 128000,
+  openrouter: 200000,
+  cerebras: 128000,
+  github: 8000,
+  mistral: 32000,
+  pollinations: 128000,
+  ovhcloud: 128000,
+  openai: 128000,
+  gemini: 1000000,
+};
+
+function truncateMessages(messages: any[], maxTokens: number): any[] {
+  if (!messages.length) return messages;
+  let total = 0;
+  const result: any[] = [];
+  const systemMsg = messages.find((m: any) => m.role === 'system');
+  const chatMsgs = messages.filter((m: any) => m.role !== 'system');
+  if (systemMsg) {
+    const sysTokens = estimateTokens(typeof systemMsg.content === 'string' ? systemMsg.content : JSON.stringify(systemMsg.content));
+    total += sysTokens;
+    result.push(systemMsg);
+  }
+  const keepFrom = Math.max(0, chatMsgs.length - 40);
+  for (let i = keepFrom; i < chatMsgs.length; i++) {
+    const msg = chatMsgs[i];
+    const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+    const msgTokens = estimateTokens(content);
+    if (total + msgTokens > maxTokens) {
+      if (result.length > 1) break;
+    }
+    total += msgTokens;
+    result.push(msg);
+  }
+  return result;
+}
 const RETRYABLE = new Set([413, 429, 502, 503, 504]);
 const AUTH_ERRORS = new Set([401, 403]);
 const QUOTA_ERRORS = new Set([402, 429]);
@@ -157,9 +193,13 @@ function buildChain(endpoint: string, isAnthropicProto: boolean, body: any, rout
     const fb = FALLBACK_PROVIDERS.find(p => p.name === primary);
     if (fb) {
       const fbModel = modelForProvider(fb.name, routeTier, fbBody.model);
+      const ctxLimit = PROVIDER_CONTEXT_LIMITS[fb.name] || 128000;
       const fbBodyClone = { ...fbBody, model: fbModel, max_tokens: Math.min(fbBody.max_tokens || 8000, 8000) };
       if (!PROVIDERS_WITH_REASONING.has(fb.name) && fbBodyClone.messages) {
         fbBodyClone.messages = stripReasoning(fbBodyClone.messages);
+      }
+      if (fbBodyClone.messages) {
+        fbBodyClone.messages = truncateMessages(fbBodyClone.messages, ctxLimit);
       }
       chain.push({ name: fb.name, url: fb.chatEndpoint, key: fb.apiKey, body: fbBodyClone, headers: { 'Authorization': `Bearer ${fb.apiKey}`, 'Content-Type': 'application/json' } });
       primaryUsed = true;
@@ -184,9 +224,13 @@ function buildChain(endpoint: string, isAnthropicProto: boolean, body: any, rout
   for (const fb of FALLBACK_PROVIDERS) {
     if (primary && fb.name === primary) continue;
     const fbModel = modelForProvider(fb.name, routeTier, fbBody.model);
+    const ctxLimit = PROVIDER_CONTEXT_LIMITS[fb.name] || 128000;
     const fbBodyClone = { ...fbBody, model: fbModel, max_tokens: Math.min(fbBody.max_tokens || 8000, 8000) };
     if (!PROVIDERS_WITH_REASONING.has(fb.name) && fbBodyClone.messages) {
       fbBodyClone.messages = stripReasoning(fbBodyClone.messages);
+    }
+    if (fbBodyClone.messages) {
+      fbBodyClone.messages = truncateMessages(fbBodyClone.messages, ctxLimit);
     }
     chain.push({ name: fb.name, url: fb.chatEndpoint, key: fb.apiKey, body: fbBodyClone, headers: { 'Authorization': `Bearer ${fb.apiKey}`, 'Content-Type': 'application/json' } });
   }
