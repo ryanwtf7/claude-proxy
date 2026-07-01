@@ -60,7 +60,7 @@ function extractErrMsg(resp: Response, text: string): string {
 // Maps OpenCode model IDs to equivalent models supported by each fallback provider
 const MODEL_FALLBACK: Record<string, Record<string, string>> = {
   // Free tier → cheap/small provider models
-  'deepseek-v4-flash-free':  { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'deepseek-v4-flash-free':  { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   'mimo-v2.5-free':          { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   'nemotron-3-ultra-free':   { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'meta-llama/llama-4-scout-17b-16e-instruct', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   'north-mini-code-free':    { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'codestral-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
@@ -103,9 +103,9 @@ const DEFAULT_FALLBACKS: Record<string, string> = {
 const OPUS_FALLBACKS: Record<string, string> = {
   openai: 'gpt-4o',
   gemini: 'gemini-2.0-pro',
-  groq: 'qwen/qwen3-32b',
+  groq: 'llama-3.3-70b-versatile',
   openrouter: 'auto',
-  cerebras: 'zai-glm-4.7',
+  cerebras: 'gemma-4-31b',
   github: 'gpt-4o',
   mistral: 'mistral-large-latest',
   pollinations: 'openai',
