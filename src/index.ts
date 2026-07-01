@@ -218,7 +218,11 @@ function buildChain(endpoint: string, isAnthropicProto: boolean, body: any, rout
       opencodeHeaders['Authorization'] = `Bearer ${API_KEY}`;
     }
     if (PROXY) opencodeHeaders['OpenCode-Proxy'] = PROXY;
-    chain.push({ name: `opencode`, url: endpoint, key: API_KEY, body, headers: opencodeHeaders });
+    const opencodeBody = { ...body };
+    if (!opencodeBody.system) {
+      opencodeBody.system = 'You are a helpful assistant. Always respond in English.';
+    }
+    chain.push({ name: `opencode`, url: endpoint, key: API_KEY, body: opencodeBody, headers: opencodeHeaders });
   }
 
   for (const fb of FALLBACK_PROVIDERS) {
