@@ -17,7 +17,7 @@ app.use(express.json({ limit: '100mb' }));
 app.set('trust proxy', true);
 
 const PROVIDER_CONTEXT_LIMITS: Record<string, number> = {
-  groq: 128000,
+  groq: 4000,
   openrouter: 200000,
   cerebras: 128000,
   github: 8000,
@@ -96,8 +96,8 @@ function extractErrMsg(resp: Response, text: string): string {
 // Maps OpenCode model IDs to equivalent models supported by each fallback provider
 const MODEL_FALLBACK: Record<string, Record<string, string>> = {
   // Free tier → cheap/small provider models
-  'deepseek-v4-flash-free':  { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
-  'mimo-v2.5-free':          { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'deepseek-v4-flash-free':  { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2.5-free':          { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   'nemotron-3-ultra-free':   { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'meta-llama/llama-4-scout-17b-16e-instruct', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   'north-mini-code-free':    { openai: 'gpt-4o-mini', gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'codestral-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   // Paid chat models (OpenAI protocol)
@@ -109,10 +109,10 @@ const MODEL_FALLBACK: Record<string, Record<string, string>> = {
   'kimi-k2.7':               { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   'deepseek-v4-pro':         { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'meta-llama/llama-4-scout-17b-16e-instruct', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   'deepseek-v4-flash':       { openai: 'gpt-4o-mini',  gemini: 'gemini-2.0-flash', groq: 'llama-3.1-8b-instant', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o-mini', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
-  'mimo-v2-pro':             { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
-  'mimo-v2-omni':            { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
-  'mimo-v2.5-pro':           { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
-  'mimo-v2.5':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-flash', groq: 'llama-3.3-70b-versatile', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2-pro':             { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2-omni':            { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2.5-pro':           { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
+  'mimo-v2.5':               { openai: 'gpt-4o',       gemini: 'gemini-2.0-flash', groq: 'qwen/qwen3-32b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-small-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   // Paid Anthropic protocol models
   'minimax-m3':              { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'openai/gpt-oss-120b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
   'minimax-m2.7':            { openai: 'gpt-4o',       gemini: 'gemini-2.5-pro',  groq: 'openai/gpt-oss-120b', openrouter: 'auto', cerebras: 'gemma-4-31b', github: 'gpt-4o', mistral: 'mistral-large-latest', pollinations: 'openai', ovhcloud: 'gpt-oss-20b' },
@@ -126,7 +126,7 @@ const MODEL_FALLBACK: Record<string, Record<string, string>> = {
 const DEFAULT_FALLBACKS: Record<string, string> = {
   openai: 'gpt-4o-mini',
   gemini: 'gemini-2.0-flash',
-  groq: 'llama-3.3-70b-versatile',
+  groq: 'qwen/qwen3-32b',
   openrouter: 'auto',
   cerebras: 'gemma-4-31b',
   github: 'gpt-4o-mini',
@@ -139,7 +139,7 @@ const DEFAULT_FALLBACKS: Record<string, string> = {
 const OPUS_FALLBACKS: Record<string, string> = {
   openai: 'gpt-4o',
   gemini: 'gemini-2.5-pro',
-  groq: 'llama-3.3-70b-versatile',
+  groq: 'qwen/qwen3-32b',
   openrouter: 'auto',
   cerebras: 'gemma-4-31b',
   github: 'gpt-4o',
@@ -152,7 +152,7 @@ const OPUS_FALLBACKS: Record<string, string> = {
 const SONNET_FALLBACKS: Record<string, string> = {
   openai: 'gpt-4o-mini',
   gemini: 'gemini-2.0-flash',
-  groq: 'llama-3.3-70b-versatile',
+  groq: 'qwen/qwen3-32b',
   openrouter: 'auto',
   cerebras: 'gemma-4-31b',
   github: 'gpt-4o',
@@ -642,10 +642,11 @@ async function handleMessages(req: express.Request, res: express.Response) {
       const streamBody = { ...oaiBody, stream: true, stream_options: { include_usage: true } };
 
       // Rebuild chain with streaming body — preserve per-provider model mapping,
-      // strip reasoning for providers that don't support it, cap tokens for fallbacks
+      // strip reasoning for providers that don't support it, cap tokens for fallbacks.
+      // Use c.body.messages (already truncated by buildChain) instead of raw streamBody.
       const MAX_FALLBACK_TOKENS = 8000;
       const streamChain = chain.map(c => {
-        const body: any = { ...streamBody, model: c.body.model, max_tokens: Math.min(streamBody.max_tokens || MAX_FALLBACK_TOKENS, MAX_FALLBACK_TOKENS) };
+        const body: any = { ...streamBody, model: c.body.model, messages: c.body.messages, max_tokens: Math.min(streamBody.max_tokens || MAX_FALLBACK_TOKENS, MAX_FALLBACK_TOKENS) };
         if (!PROVIDERS_WITH_REASONING.has(c.name) && body.messages) {
           body.messages = stripReasoning(body.messages);
         }
@@ -1014,7 +1015,7 @@ document.addEventListener('click', function(e){
 
 (function(){
   var pmeta={
-    groq:{model:'llama-3.3-70b-versatile',models:'Llama 3.1/3.3, Qwen3, Llama 4 Scout'},
+    groq:{model:'qwen/qwen3-32b',models:'Qwen3, Llama 3.1/3.3, Llama 4 Scout'},
     openrouter:{model:'auto',models:'20+ free models'},
     cerebras:{model:'gemma-4-31b',models:'Gemma 4, ZAI-GLM 4.7'},
     github:{model:'gpt-4o-mini',models:'GPT-4o, GPT-4o-mini, Llama'},
